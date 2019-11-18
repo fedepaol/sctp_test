@@ -8,8 +8,8 @@ import (
 	v1 "github.com/openshift/api/config/v1"
 	configClientv1 "github.com/openshift/client-go/config/clientset/versioned/typed/config/v1"
 
-	_ "github.com/openshift/machine-config-operator/pkg/apis/machineconfiguration.openshift.io/v1"
-
+	mcfgv1 "github.com/openshift/machine-config-operator/pkg/apis/machineconfiguration.openshift.io/v1"
+	mcfgClient "github.com/openshift/machine-config-operator/pkg/generated/clientset/versioned"
 	k8sv1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -38,7 +38,11 @@ func main() {
 		fmt.Println("Creating sepolicy pod on node ", n.Name)
 		createPolicyJob(n.Name, n.Name, clientset)
 	}
-	// mc := mcfgv1.MCOConfig{}
+	mcoClient := mcfgClient.NewForConfigOrDie(config)
+	mc := mcfgv1.MachineConfig{}
+
+	mcoClient.MachineconfigurationV1().MachineConfigs().Create(&mc)
+
 	clientset.CoreV1().Pods("default").List(metav1.ListOptions{})
 
 	configClient := configClientv1.NewForConfigOrDie(config)

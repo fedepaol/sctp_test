@@ -154,9 +154,14 @@
 
 [[projects]]
   branch = "master"
-  digest = "1:984213011d5efba011f598ddb50f39e1207d1bb04cc354c9877b4fecf1ab1c09"
+  digest = "1:7ae21f5f92707e66fcf23a5db706e53b199cd7eb96c81fb0dfa1b8a98b4754f8"
   name = "github.com/openshift/machine-config-operator"
-  packages = ["pkg/apis/machineconfiguration.openshift.io/v1"]
+  packages = [
+    "pkg/apis/machineconfiguration.openshift.io/v1",
+    "pkg/generated/clientset/versioned",
+    "pkg/generated/clientset/versioned/scheme",
+    "pkg/generated/clientset/versioned/typed/machineconfiguration.openshift.io/v1",
+  ]
   pruneopts = "UT"
   revision = "48c37772819ad80524f88a05daf09a2be0752138"
 
@@ -480,6 +485,7 @@
     "github.com/openshift/api/config/v1",
     "github.com/openshift/client-go/config/clientset/versioned/typed/config/v1",
     "github.com/openshift/machine-config-operator/pkg/apis/machineconfiguration.openshift.io/v1",
+    "github.com/openshift/machine-config-operator/pkg/generated/clientset/versioned",
     "k8s.io/api/core/v1",
     "k8s.io/apimachinery/pkg/apis/meta/v1",
     "k8s.io/client-go/kubernetes",
