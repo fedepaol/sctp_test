@@ -14,6 +14,7 @@ import (
 	mcfgClient "github.com/openshift/machine-config-operator/pkg/generated/clientset/versioned"
 	k8sv1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 )
@@ -49,8 +50,12 @@ func main() {
 	configClient := configClientv1.NewForConfigOrDie(config)
 	openFeaturegate(configClient)
 
+	fmt.Println("Checking featureset")
+	createServiceAndCheckFeatureGate(clientset)
+
 	fmt.Println("Checking ready")
 	checkSctpReady(clientset, nodes.Items)
+
 }
 
 func openFeaturegate(client *configClientv1.ConfigV1Client) {
@@ -165,6 +170,34 @@ func applyMC(client *mcfgClient.Clientset) error {
 	return nil
 }
 
+func createSctpService(client *kubernetes.Clientset) error {
+	service := k8sv1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "sctpservice",
+		},
+		Spec: k8sv1.ServiceSpec{
+			Selector: map[string]string{
+				"app": "sctpserver",
+			},
+			Ports: []k8sv1.ServicePort{
+				k8sv1.ServicePort{
+					Protocol: k8sv1.ProtocolSCTP,
+					Port:     30101,
+					TargetPort: intstr.IntOrString{
+						Type:   intstr.String,
+						StrVal: "sctpserver",
+					},
+				},
+			},
+		},
+	}
+	_, err := client.CoreV1().Services("default").Create(&service)
+	if err != nil {
+		return fmt.Errorf("Failed to create service", err)
+	}
+	return nil
+}
+
 func checkSctpReady(client *kubernetes.Clientset, nodes []k8sv1.Node) error {
 	args := []string{`set -x; x="$(checksctp 2>&1)"; echo "$x" ; if [ "$x" = "SCTP supported" ]; then echo "succeeded"; exit 0; else echo "failed"; exit 1; fi`}
 	for _, n := range nodes {
@@ -218,6 +251,17 @@ func RenderJob(name string, node string, cmd []string, args []string) *k8sv1.Pod
 	}
 
 	return &job
+}
+
+func createServiceAndCheckFeatureGate(client *kubernetes.Clientset) {
+	for {
+		err := createSctpService(client)
+		if err != nil {
+			log.Println("Failed to create sctp service for ", err)
+			continue
+		}
+		break
+	}
 }
 
 func newBool(x bool) *bool {
