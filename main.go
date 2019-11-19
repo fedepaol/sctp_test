@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"time"
 
 	v1 "github.com/openshift/api/config/v1"
 	configClientv1 "github.com/openshift/client-go/config/clientset/versioned/typed/config/v1"
@@ -165,25 +166,31 @@ func applyMC(client *mcfgClient.Clientset) error {
 }
 
 func checkSctpReady(client *kubernetes.Clientset, nodes []k8sv1.Node) error {
-	args := []string{`set -x; x="$(checksctp))"; echo "$x" ; if [ "$x" = "SCTP supported" ]; then echo "succeeded"; exit 0; else echo "failed"; exit 1; fi`}
+	args := []string{`set -x; x="$(checksctp 2>&1)"; echo "$x" ; if [ "$x" = "SCTP supported" ]; then echo "succeeded"; exit 0; else echo "failed"; exit 1; fi`}
 	for _, n := range nodes {
 		fmt.Println("Creating job on node ", n.Name)
-		RenderJob("checksctp"+n.Name, n.Name, []string{"/bin/bash", "-c"}, args)
+		job := RenderJob("checksctp"+n.Name, n.Name, []string{"/bin/bash", "-c"}, args)
+		client.CoreV1().Pods("default").Create(job)
 	}
 
+Exit:
 	for {
 		pods, err := client.CoreV1().Pods("default").List(metav1.ListOptions{LabelSelector: "app=test"})
 		if err != nil {
 			return fmt.Errorf("Failed to retrieve test pods, %v", err)
 		}
+		time.Sleep(2 * time.Second)
 		for _, p := range pods.Items {
 			if p.Status.Phase != k8sv1.PodSucceeded {
-				fmt.Printf("Pod %s in phase %v", p.Name, p.Status.Phase)
-				continue
+				fmt.Printf("Pod %s in phase %v\n", p.Name, p.Status.Phase)
+				continue Exit
+			} else {
+				fmt.Printf("Pod111 %s in phase %v\n", p.Name, p.Status.Phase)
 			}
 		}
-
+		break
 	}
+	return nil
 }
 
 func RenderJob(name string, node string, cmd []string, args []string) *k8sv1.Pod {
