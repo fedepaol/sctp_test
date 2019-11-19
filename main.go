@@ -60,17 +60,47 @@ func main() {
 
 func testClientServerConn(client *kubernetes.Clientset, nodes []k8sv1.Node) {
 	firstNode := nodes[0].Name
-	args := []string{}
-	clientPod := RenderJob("sctpclient", firstNode, []string{"/bin/bash", "-c"}, args)
-
-	client.CoreV1().Pods("default").Create(clientPod)
 
 	serverNode := firstNode
 	if len(nodes) > 1 {
 		serverNode = nodes[1].Name
 	}
-	serverPod := RenderJob("scptserver", serverNode, []string{"/bin/bash", "-c"}, args)
-	client.CoreV1().Pods("default").Create(serverPod)
+	serverArgs := []string{"testsctp -H localhost -P 30101 -L | grep SHUTDOWN && exit 0"}
+
+	serverPod := RenderJob("scptserver", serverNode, []string{"/bin/bash", "-c"}, serverArgs)
+	serverPod.Spec.Containers[0].Ports = []k8sv1.ContainerPort{
+		k8sv1.ContainerPort{
+			Name:          "sctpport",
+			Protocol:      k8sv1.ProtocolSCTP,
+			ContainerPort: 30100,
+		},
+	}
+
+	server, err := client.CoreV1().Pods("default").Create(serverPod)
+	if err != nil {
+		log.Fatalf("Failed to create server %v", err)
+	}
+	podAddress := server.Status.PodIP
+	clientArgs := []string{fmt.Sprintf("testsctp -H localhost -P 30101 -h %s -p 30100 -s", podAddress)}
+	clientPod := RenderJob("sctpclient", firstNode, []string{"/bin/bash", "-c"}, clientArgs)
+	client.CoreV1().Pods("default").Create(clientPod)
+
+	for {
+		pod, err := client.CoreV1().Pods("default").Get("sctpserver", metav1.GetOptions{})
+		if err != nil {
+			log.Fatalf("Failed to fetch sctpserver pod")
+		}
+
+		if pod.Status.Phase != k8sv1.PodSucceeded {
+			log.Println("sctp server in phase ", pod.Status.Phase)
+			continue
+		}
+
+		break
+	}
+
+	fmt.Println("Succeed!")
+
 }
 
 func openFeaturegate(client *configClientv1.ConfigV1Client) {
@@ -146,7 +176,7 @@ func createPolicyJob(name string, node string, client *kubernetes.Clientset) {
 
 	_, err := client.CoreV1().Pods("default").Create(&pod)
 	if err != nil {
-		log.Fatalf("Failed to create policy pod", err)
+		log.Fatal("Failed to create policy pod", err)
 	}
 }
 
@@ -221,7 +251,7 @@ func createSctpService(client *kubernetes.Clientset) error {
 	}
 	_, err := client.CoreV1().Services("default").Create(&service)
 	if err != nil {
-		return fmt.Errorf("Failed to create service", err)
+		return fmt.Errorf("Failed to create service %v", err)
 	}
 	return nil
 }
