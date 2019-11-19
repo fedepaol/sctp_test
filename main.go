@@ -8,6 +8,7 @@ import (
 	v1 "github.com/openshift/api/config/v1"
 	configClientv1 "github.com/openshift/client-go/config/clientset/versioned/typed/config/v1"
 
+	igntypes "github.com/coreos/ignition/config/v2_2/types"
 	mcfgv1 "github.com/openshift/machine-config-operator/pkg/apis/machineconfiguration.openshift.io/v1"
 	mcfgClient "github.com/openshift/machine-config-operator/pkg/generated/clientset/versioned"
 	k8sv1 "k8s.io/api/core/v1"
@@ -39,15 +40,17 @@ func main() {
 		createPolicyJob(n.Name, n.Name, clientset)
 	}
 	mcoClient := mcfgClient.NewForConfigOrDie(config)
-	mc := mcfgv1.MachineConfig{}
 
-	mcoClient.MachineconfigurationV1().MachineConfigs().Create(&mc)
-
+	applyMC(mcoClient)
 	clientset.CoreV1().Pods("default").List(metav1.ListOptions{})
 
 	configClient := configClientv1.NewForConfigOrDie(config)
+	openFeaturegate(configClient)
 
-	fg, err := configClient.FeatureGates().Get("cluster", metav1.GetOptions{})
+}
+
+func openFeaturegate(client *configClientv1.ConfigV1Client) {
+	fg, err := client.FeatureGates().Get("cluster", metav1.GetOptions{})
 	if err != nil {
 		log.Fatalf("Failed to get cluster featuregate")
 	}
@@ -62,13 +65,11 @@ func main() {
 		},
 	}
 
-	res, err := configClient.FeatureGates().Update(fg)
+	res, err := client.FeatureGates().Update(fg)
 	if err != nil {
 		log.Fatalf("Creation failed %v", err)
 	}
-
-	fmt.Println("Created ", *res)
-
+	log.Println("Created ", *res)
 }
 
 func createPolicyJob(name string, node string, client *kubernetes.Clientset) {
@@ -112,6 +113,58 @@ func createPolicyJob(name string, node string, client *kubernetes.Clientset) {
 	}
 }
 
+func applyMC(client *mcfgClient.Clientset) error {
+	mc := mcfgv1.MachineConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "allow-sctp",
+			Labels: map[string]string{
+				"machineconfiguration.openshift.io/role": "worker",
+			},
+		},
+		Spec: mcfgv1.MachineConfigSpec{
+			Config: igntypes.Config{
+				Ignition: igntypes.Ignition{
+					Version: "2.2.0",
+				},
+				Storage: igntypes.Storage{
+					Files: []igntypes.File{
+						igntypes.File{
+							Node: igntypes.Node{
+								Filesystem: "root",
+								Path:       "/etc/modprobe.d/sctp-blacklist.conf",
+							},
+							FileEmbedded1: igntypes.FileEmbedded1{
+								Mode: newInt(420),
+								Contents: igntypes.FileContents{
+									Source: "data:,",
+								},
+							},
+						},
+						igntypes.File{
+							Node: igntypes.Node{
+								Filesystem: "root",
+								Path:       "/etc/modules-load.d/sctp-load.conf",
+							},
+							FileEmbedded1: igntypes.FileEmbedded1{
+								Mode: newInt(420),
+								Contents: igntypes.FileContents{
+									Source: "data:text/plain;charset=utf-8;base64,c2N0cA==",
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	client.MachineconfigurationV1().MachineConfigs().Create(&mc)
+	return nil
+}
+
 func newBool(x bool) *bool {
+	return &x
+}
+
+func newInt(x int) *int {
 	return &x
 }
