@@ -58,6 +58,21 @@ func main() {
 
 }
 
+func testClientServerConn(client *kubernetes.Clientset, nodes []k8sv1.Node) {
+	firstNode := nodes[0].Name
+	args := []string{}
+	clientPod := RenderJob("sctpclient", firstNode, []string{"/bin/bash", "-c"}, args)
+
+	client.CoreV1().Pods("default").Create(clientPod)
+
+	serverNode := firstNode
+	if len(nodes) > 1 {
+		serverNode = nodes[1].Name
+	}
+	serverPod := RenderJob("scptserver", serverNode, []string{"/bin/bash", "-c"}, args)
+	client.CoreV1().Pods("default").Create(serverPod)
+}
+
 func openFeaturegate(client *configClientv1.ConfigV1Client) {
 	fg, err := client.FeatureGates().Get("cluster", metav1.GetOptions{})
 	if err != nil {
@@ -103,12 +118,25 @@ func createPolicyJob(name string, node string, client *kubernetes.Clientset) {
 					        echo "policy applied";`},
 					SecurityContext: &k8sv1.SecurityContext{
 						Privileged: newBool(true),
-						RunAsUser:  new(int64),
+					},
+					VolumeMounts: []k8sv1.VolumeMount{
+						k8sv1.VolumeMount{
+							Name:      "host",
+							MountPath: "/host",
+						},
 					},
 				},
 			},
-			SecurityContext: &k8sv1.PodSecurityContext{
-				RunAsUser: new(int64),
+			Volumes: []k8sv1.Volume{
+				k8sv1.Volume{
+					Name: "host",
+					VolumeSource: k8sv1.VolumeSource{
+						HostPath: &k8sv1.HostPathVolumeSource{
+							Path: "/",
+							Type: newHostPath(k8sv1.HostPathDirectory),
+						},
+					},
+				},
 			},
 			NodeSelector: map[string]string{
 				"kubernetes.io/hostname": node,
@@ -269,5 +297,9 @@ func newBool(x bool) *bool {
 }
 
 func newInt(x int) *int {
+	return &x
+}
+
+func newHostPath(x k8sv1.HostPathType) *k8sv1.HostPathType {
 	return &x
 }
