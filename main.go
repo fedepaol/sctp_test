@@ -31,7 +31,9 @@ func main() {
 		log.Fatal("Failed to get client", err)
 	}
 
-	nodes, err := clientset.CoreV1().Nodes().List(metav1.ListOptions{})
+	nodes, err := clientset.CoreV1().Nodes().List(metav1.ListOptions{
+		LabelSelector: "node-role.kubernetes.io/worker=",
+	})
 	if err != nil {
 		log.Fatal("Failed to get nodes", err)
 	}
@@ -42,11 +44,12 @@ func main() {
 	mcoClient := mcfgClient.NewForConfigOrDie(config)
 
 	applyMC(mcoClient)
-	clientset.CoreV1().Pods("default").List(metav1.ListOptions{})
 
 	configClient := configClientv1.NewForConfigOrDie(config)
 	openFeaturegate(configClient)
 
+	fmt.Println("Checking ready")
+	checkSctpReady(clientset, nodes.Items)
 }
 
 func openFeaturegate(client *configClientv1.ConfigV1Client) {
@@ -109,7 +112,7 @@ func createPolicyJob(name string, node string, client *kubernetes.Clientset) {
 
 	_, err := client.CoreV1().Pods("default").Create(&pod)
 	if err != nil {
-		log.Fatalf("Failed to create policy pod")
+		log.Fatalf("Failed to create policy pod", err)
 	}
 }
 
@@ -159,6 +162,55 @@ func applyMC(client *mcfgClient.Clientset) error {
 	}
 	client.MachineconfigurationV1().MachineConfigs().Create(&mc)
 	return nil
+}
+
+func checkSctpReady(client *kubernetes.Clientset, nodes []k8sv1.Node) error {
+	args := []string{`set -x; x="$(checksctp))"; echo "$x" ; if [ "$x" = "SCTP supported" ]; then echo "succeeded"; exit 0; else echo "failed"; exit 1; fi`}
+	for _, n := range nodes {
+		fmt.Println("Creating job on node ", n.Name)
+		RenderJob("checksctp"+n.Name, n.Name, []string{"/bin/bash", "-c"}, args)
+	}
+
+	for {
+		pods, err := client.CoreV1().Pods("default").List(metav1.ListOptions{LabelSelector: "app=test"})
+		if err != nil {
+			return fmt.Errorf("Failed to retrieve test pods, %v", err)
+		}
+		for _, p := range pods.Items {
+			if p.Status.Phase != k8sv1.PodSucceeded {
+				fmt.Printf("Pod %s in phase %v", p.Name, p.Status.Phase)
+				continue
+			}
+		}
+
+	}
+}
+
+func RenderJob(name string, node string, cmd []string, args []string) *k8sv1.Pod {
+	job := k8sv1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			GenerateName: name,
+			Labels: map[string]string{
+				"app": "test",
+			},
+		},
+		Spec: k8sv1.PodSpec{
+			RestartPolicy: k8sv1.RestartPolicyNever,
+			Containers: []k8sv1.Container{
+				{
+					Name:    name,
+					Image:   "quay.io/wcaban/net-toolbox:latest",
+					Command: cmd,
+					Args:    args,
+				},
+			},
+			NodeSelector: map[string]string{
+				"kubernetes.io/hostname": node,
+			},
+		},
+	}
+
+	return &job
 }
 
 func newBool(x bool) *bool {
