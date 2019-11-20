@@ -343,12 +343,8 @@ func JobForNode(name, node, app string, cmd []string, args []string) *k8sv1.Pod 
 
 func beforeAll(fn func()) {
 	first := true
-	fmt.Println("FEDEAAA")
 	BeforeEach(func() {
-		fmt.Println("FEDEAAA11")
-
 		if first {
-			fmt.Println("FEDEAAA1")
 			fn()
 			first = false
 		}
