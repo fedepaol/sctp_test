@@ -89,7 +89,6 @@ var _ = Describe("TestSctp", func() {
 			}, 1*time.Minute, 1*time.Second).Should(Equal(k8sv1.PodSucceeded))
 		})
 	})
-
 })
 
 func setupClients() *testClients {
@@ -111,7 +110,6 @@ func setupClients() *testClients {
 
 func openFeaturegate(client *configClientv1.ConfigV1Client) {
 	Context("Open Feature Gate", func() {
-
 		fg, err := client.FeatureGates().Get("cluster", metav1.GetOptions{})
 		Expect(err).ToNot(HaveOccurred())
 
@@ -178,7 +176,6 @@ func applyMC(client *mcfgClient.Clientset, k8sClient *kubernetes.Clientset) erro
 	client.MachineconfigurationV1().MachineConfigs().Create(&mc)
 
 	waitForSctpReady(k8sClient)
-
 	return nil
 }
 
@@ -230,7 +227,6 @@ func applySELinuxPolicy(client *kubernetes.Clientset) {
 }
 
 func createSEPolicyPods(client *kubernetes.Clientset, node string) {
-
 	pod := k8sv1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			GenerateName: "sctppolicy",
