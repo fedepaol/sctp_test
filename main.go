@@ -55,6 +55,7 @@ func main() {
 
 	fmt.Println("Checking ready")
 	checkSctpReady(clientset, nodes.Items)
+	testClientServerConn(clientset, nodes.Items)
 
 }
 
