@@ -28,27 +28,37 @@ type testClients struct {
 	mcoClient       *mcfgClient.Clientset
 }
 
+var clients *testClients
+
+var _ = BeforeSuite(func() {
+	clients = setupClients()
+})
+
 var _ = Describe("TestSctp", func() {
-	var clients *testClients
+
 	beforeAll(func() {
-		clients = setupClients()
 		openFeaturegate(clients.ocpConfigClient)
 		applySELinuxPolicy(clients.k8sClient)
 		applyMC(clients.mcoClient, clients.k8sClient)
 		createSctpService(clients.k8sClient)
 	})
 
-	Context("Client Server Connection", func() {
-		nodes, err := clients.k8sClient.CoreV1().Nodes().List(metav1.ListOptions{
-			LabelSelector: "node-role.kubernetes.io/worker=",
-		})
-		Expect(err).ToNot(HaveOccurred())
-		clientNode := nodes.Items[0].Name
-		serverNode := nodes.Items[0].Name
-		if len(nodes.Items) > 0 {
-			serverNode = nodes.Items[1].Name
-		}
+	var _ = Describe("Client Server Connection", func() {
+		var clientNode string
+		var serverNode string
+		It("Should fetch client and server node", func() {
+			nodes, err := clients.k8sClient.CoreV1().Nodes().List(metav1.ListOptions{
+				LabelSelector: "node-role.kubernetes.io/worker=",
+			})
 
+			Expect(err).ToNot(HaveOccurred())
+			clientNode = nodes.Items[0].Name
+			serverNode = nodes.Items[0].Name
+			if len(nodes.Items) > 0 {
+				serverNode = nodes.Items[1].Name
+			}
+		})
+		var err error
 		var serverPod *k8sv1.Pod
 		It("Should create the server pod", func() {
 			serverArgs := []string{"sctp_test -H localhost -P 30101 -l 2>&1 > sctp.log & while sleep 10; do if grep --quiet SHUTDOWN sctp.log; then exit 0; fi; done"}
@@ -60,8 +70,7 @@ var _ = Describe("TestSctp", func() {
 					ContainerPort: 30101,
 				},
 			}
-
-			serverPod, err = clients.k8sClient.CoreV1().Pods("default").Create(serverPod)
+			serverPod, err = clients.k8sClient.CoreV1().Pods("default").Create(pod)
 			Expect(err).ToNot(HaveOccurred())
 		})
 
@@ -129,7 +138,7 @@ func openFeaturegate(client *configClientv1.ConfigV1Client) {
 	})
 }
 
-func applyMC(client *mcfgClient.Clientset, k8sClient *kubernetes.Clientset) error {
+func applyMC(client *mcfgClient.Clientset, k8sClient *kubernetes.Clientset) {
 	mc := mcfgv1.MachineConfig{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "allow-sctp",
@@ -176,7 +185,6 @@ func applyMC(client *mcfgClient.Clientset, k8sClient *kubernetes.Clientset) erro
 	client.MachineconfigurationV1().MachineConfigs().Create(&mc)
 
 	waitForSctpReady(k8sClient)
-	return nil
 }
 
 func waitForSctpReady(client *kubernetes.Clientset) {
@@ -238,6 +246,7 @@ func createSEPolicyPods(client *kubernetes.Clientset, node string) {
 			RestartPolicy: k8sv1.RestartPolicyNever,
 			Containers: []k8sv1.Container{
 				{
+					Name:    "sepolicy",
 					Image:   "fedepaol/sctpsepolicy:v1",
 					Command: []string{"/bin/sh", "-c"},
 					Args: []string{`cp newsctp.pp /host/tmp;
@@ -303,7 +312,6 @@ func createSctpService(client *kubernetes.Clientset) {
 		_, err := client.CoreV1().Services("default").Create(&service)
 		return err
 	}, 3*time.Minute, 1*time.Second).ShouldNot(HaveOccurred())
-
 }
 
 func JobForNode(name, node, app string, cmd []string, args []string) *k8sv1.Pod {
@@ -335,8 +343,12 @@ func JobForNode(name, node, app string, cmd []string, args []string) *k8sv1.Pod 
 
 func beforeAll(fn func()) {
 	first := true
+	fmt.Println("FEDEAAA")
 	BeforeEach(func() {
+		fmt.Println("FEDEAAA11")
+
 		if first {
+			fmt.Println("FEDEAAA1")
 			fn()
 			first = false
 		}
