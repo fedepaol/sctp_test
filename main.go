@@ -39,7 +39,7 @@ func main() {
 	if err != nil {
 		log.Fatal("Failed to get nodes", err)
 	}
-	for _, n := range nodes.Items {
+	/*for _, n := range nodes.Items {
 		fmt.Println("Creating sepolicy pod on node ", n.Name)
 		createPolicyJob(n.Name, n.Name, clientset)
 	}
@@ -54,7 +54,7 @@ func main() {
 	createServiceAndCheckFeatureGate(clientset)
 
 	fmt.Println("Checking ready")
-	checkSctpReady(clientset, nodes.Items)
+	checkSctpReady(clientset, nodes.Items)*/
 	testClientServerConn(clientset, nodes.Items)
 
 }
@@ -66,14 +66,15 @@ func testClientServerConn(client *kubernetes.Clientset, nodes []k8sv1.Node) {
 	if len(nodes) > 1 {
 		serverNode = nodes[1].Name
 	}
-	serverArgs := []string{"testsctp -H localhost -P 30101 -L | grep SHUTDOWN && exit 0"}
+	serverArgs := []string{"sctp_test -H localhost -P 30101 -l 2>&1 > sctp.log & while sleep 10; do if grep --quiet SHUTDOWN sctp.log; then exit 0; fi; done"}
+	// serverArgs := []string{"sctp_test -H localhost -P 30101 -l"}
 
 	serverPod := RenderJob("scptserver", serverNode, []string{"/bin/bash", "-c"}, serverArgs)
 	serverPod.Spec.Containers[0].Ports = []k8sv1.ContainerPort{
 		k8sv1.ContainerPort{
 			Name:          "sctpport",
 			Protocol:      k8sv1.ProtocolSCTP,
-			ContainerPort: 30100,
+			ContainerPort: 30101,
 		},
 	}
 
@@ -81,15 +82,35 @@ func testClientServerConn(client *kubernetes.Clientset, nodes []k8sv1.Node) {
 	if err != nil {
 		log.Fatalf("Failed to create server %v", err)
 	}
+
 	podAddress := server.Status.PodIP
-	clientArgs := []string{fmt.Sprintf("testsctp -H localhost -P 30101 -h %s -p 30100 -s", podAddress)}
+	for {
+		time.Sleep(2 * time.Second)
+		pod, err := client.CoreV1().Pods("default").Get(server.Name, metav1.GetOptions{})
+		if err != nil {
+			log.Println("Failed to fetch sctpserver pod", server.Name)
+			continue
+		}
+
+		if pod.Status.Phase != k8sv1.PodRunning {
+			log.Println("waiting for ip: sctp server in phase ", pod.Status.Phase)
+			continue
+		}
+
+		podAddress = pod.Status.PodIP
+
+		break
+	}
+
+	clientArgs := []string{fmt.Sprintf("sctp_test -H localhost -P 30100 -h %s -p 30101 -s", podAddress)}
 	clientPod := RenderJob("sctpclient", firstNode, []string{"/bin/bash", "-c"}, clientArgs)
 	client.CoreV1().Pods("default").Create(clientPod)
 
 	for {
-		pod, err := client.CoreV1().Pods("default").Get("sctpserver", metav1.GetOptions{})
+		time.Sleep(2 * time.Second)
+		pod, err := client.CoreV1().Pods("default").Get(server.Name, metav1.GetOptions{})
 		if err != nil {
-			log.Fatalf("Failed to fetch sctpserver pod")
+			log.Fatal("Failed to fetch sctpserver pod", server.Name)
 		}
 
 		if pod.Status.Phase != k8sv1.PodSucceeded {
