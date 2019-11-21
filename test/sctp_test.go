@@ -54,7 +54,7 @@ var _ = Describe("TestSctp", func() {
 			Expect(err).ToNot(HaveOccurred())
 			clientNode = nodes.Items[0].Name
 			serverNode = nodes.Items[0].Name
-			if len(nodes.Items) > 0 {
+			if len(nodes.Items) > 1 {
 				serverNode = nodes.Items[1].Name
 			}
 		})
@@ -209,7 +209,7 @@ func waitForSctpReady(client *kubernetes.Clientset) {
 			}
 		}
 		return true
-	}, 3*time.Minute, 1*time.Second).Should(Equal(true))
+	}, 10*time.Minute, 10*time.Second).Should(Equal(true)) // long timeout since this requires reboots
 }
 
 func applySELinuxPolicy(client *kubernetes.Clientset) {
