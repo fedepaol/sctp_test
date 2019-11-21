@@ -37,10 +37,12 @@ var _ = BeforeSuite(func() {
 var _ = Describe("TestSctp", func() {
 
 	beforeAll(func() {
+		fmt.Println("Before")
 		openFeaturegate(clients.ocpConfigClient)
 		applySELinuxPolicy(clients.k8sClient)
 		applyMC(clients.mcoClient, clients.k8sClient)
 		createSctpService(clients.k8sClient)
+		fmt.Println("Before end")
 	})
 
 	var _ = Describe("Client Server Connection", func() {
