@@ -2,14 +2,15 @@ package test_test
 
 import (
 	"fmt"
+	"io/ioutil"
 	"log"
 	"os"
 	"time"
 
-	igntypes "github.com/coreos/ignition/config/v2_2/types"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	mcfgv1 "github.com/openshift/machine-config-operator/pkg/apis/machineconfiguration.openshift.io/v1"
+	mcfgScheme "github.com/openshift/machine-config-operator/pkg/generated/clientset/versioned/scheme"
 
 	v1 "github.com/openshift/api/config/v1"
 	configClientv1 "github.com/openshift/client-go/config/clientset/versioned/typed/config/v1"
@@ -30,19 +31,33 @@ type testClients struct {
 
 var clients *testClients
 
+const mc_yaml = "../sctp_module_mc.yaml" // TODO pass it as a param?
+
 var _ = BeforeSuite(func() {
 	clients = setupClients()
 })
 
+func loadMC() *mcfgv1.MachineConfig {
+	decode := mcfgScheme.Codecs.UniversalDeserializer().Decode
+	mcoyaml, err := ioutil.ReadFile(mc_yaml)
+	Expect(err).ToNot(HaveOccurred())
+
+	obj, _, err := decode([]byte(mcoyaml), nil, nil)
+	Expect(err).ToNot(HaveOccurred())
+	mc, ok := obj.(*mcfgv1.MachineConfig)
+	Expect(ok).To(Equal(true))
+	return mc
+}
+
 var _ = Describe("TestSctp", func() {
+	var mc *mcfgv1.MachineConfig
 
 	beforeAll(func() {
-		fmt.Println("Before")
+		mc = loadMC()
 		openFeaturegate(clients.ocpConfigClient)
 		applySELinuxPolicy(clients.k8sClient)
-		applyMC(clients.mcoClient, clients.k8sClient)
+		applyMC(clients.mcoClient, clients.k8sClient, mc)
 		createSctpService(clients.k8sClient)
-		fmt.Println("Before end")
 	})
 
 	var _ = Describe("Client Server Connection", func() {
@@ -140,52 +155,8 @@ func openFeaturegate(client *configClientv1.ConfigV1Client) {
 	})
 }
 
-func applyMC(client *mcfgClient.Clientset, k8sClient *kubernetes.Clientset) {
-	mc := mcfgv1.MachineConfig{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "allow-sctp",
-			Labels: map[string]string{
-				"machineconfiguration.openshift.io/role": "worker",
-			},
-		},
-		Spec: mcfgv1.MachineConfigSpec{
-			Config: igntypes.Config{
-				Ignition: igntypes.Ignition{
-					Version: "2.2.0",
-				},
-				Storage: igntypes.Storage{
-					Files: []igntypes.File{
-						igntypes.File{
-							Node: igntypes.Node{
-								Filesystem: "root",
-								Path:       "/etc/modprobe.d/sctp-blacklist.conf",
-							},
-							FileEmbedded1: igntypes.FileEmbedded1{
-								Mode: newInt(420),
-								Contents: igntypes.FileContents{
-									Source: "data:,",
-								},
-							},
-						},
-						igntypes.File{
-							Node: igntypes.Node{
-								Filesystem: "root",
-								Path:       "/etc/modules-load.d/sctp-load.conf",
-							},
-							FileEmbedded1: igntypes.FileEmbedded1{
-								Mode: newInt(420),
-								Contents: igntypes.FileContents{
-									Source: "data:text/plain;charset=utf-8;base64,c2N0cA==",
-								},
-							},
-						},
-					},
-				},
-			},
-		},
-	}
-	client.MachineconfigurationV1().MachineConfigs().Create(&mc)
-
+func applyMC(client *mcfgClient.Clientset, k8sClient *kubernetes.Clientset, mc *mcfgv1.MachineConfig) {
+	client.MachineconfigurationV1().MachineConfigs().Create(mc)
 	waitForSctpReady(k8sClient)
 }
 
