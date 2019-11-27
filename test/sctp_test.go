@@ -163,7 +163,7 @@ func waitForMCApplied(client *mcfgClient.Clientset) {
 			}
 		}
 		return false
-	}, 10*time.Minute, 10*time.Second).Should(Equal(true)) // long timeout since this requires reboots
+	}, 15*time.Minute, 10*time.Second).Should(Equal(true)) // long timeout since this requires reboots
 }
 
 func checkForSctpReady(client *kubernetes.Clientset) {
