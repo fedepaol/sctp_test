@@ -13,11 +13,11 @@ import (
 	mcfgScheme "github.com/openshift/machine-config-operator/pkg/generated/clientset/versioned/scheme"
 
 	configClientv1 "github.com/openshift/client-go/config/clientset/versioned/typed/config/v1"
+	mcfgClient "github.com/openshift/machine-config-operator/pkg/generated/clientset/versioned"
 	k8sv1 "k8s.io/api/core/v1"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
-
-	mcfgClient "github.com/openshift/machine-config-operator/pkg/generated/clientset/versioned"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 )
@@ -49,10 +49,37 @@ func loadMC() *mcfgv1.MachineConfig {
 	return mc
 }
 
+const testNamespace = "sctptest"
+
+func createNamespace(client *kubernetes.Clientset) {
+	_, err := client.CoreV1().Namespaces().Create(&k8sv1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: testNamespace,
+		}})
+
+	if k8serrors.IsAlreadyExists(err) {
+		return
+	}
+
+	Expect(err).ToNot(HaveOccurred())
+}
+
+func cleanNamespace(client *kubernetes.Clientset) {
+	_, err := client.CoreV1().Namespaces().Get(testNamespace, metav1.GetOptions{})
+	if err != nil {
+		return
+	}
+	client.CoreV1().Pods(testNamespace).DeleteCollection(&metav1.DeleteOptions{
+		GracePeriodSeconds: newInt64(0),
+	}, metav1.ListOptions{})
+}
+
 var _ = Describe("TestSctp", func() {
 	var mc *mcfgv1.MachineConfig
 
 	beforeAll(func() {
+		createNamespace(clients.k8sClient)
+		cleanNamespace(clients.k8sClient)
 		mc = loadMC()
 		applySELinuxPolicy(clients.k8sClient)
 		applyMC(clients.mcoClient, clients.k8sClient, mc)
@@ -60,10 +87,9 @@ var _ = Describe("TestSctp", func() {
 	})
 
 	var _ = Context("Client Server Connection", func() {
-
-		It("should connect the client and the server", func() {
-			var clientNode string
-			var serverNode string
+		var clientNode string
+		var serverNode string
+		It("Should fetch client and server node", func() {
 			nodes, err := clients.k8sClient.CoreV1().Nodes().List(metav1.ListOptions{
 				LabelSelector: "node-role.kubernetes.io/worker=",
 			})
@@ -84,22 +110,22 @@ var _ = Describe("TestSctp", func() {
 					ContainerPort: 30101,
 				},
 			}
-			serverPod, err := clients.k8sClient.CoreV1().Pods("default").Create(pod)
+			serverPod, err := clients.k8sClient.CoreV1().Pods(testNamespace).Create(pod)
 			Expect(err).ToNot(HaveOccurred())
 
 			var runningPod *k8sv1.Pod
 			Eventually(func() k8sv1.PodPhase {
-				runningPod, err = clients.k8sClient.CoreV1().Pods("default").Get(serverPod.Name, metav1.GetOptions{})
+				runningPod, err = clients.k8sClient.CoreV1().Pods(testNamespace).Get(serverPod.Name, metav1.GetOptions{})
 				Expect(err).ToNot(HaveOccurred())
 				return runningPod.Status.Phase
 			}, 3*time.Minute, 1*time.Second).Should(Equal(k8sv1.PodRunning))
 
 			clientArgs := []string{fmt.Sprintf("sctp_test -H localhost -P 30100 -h %s -p 30101 -s", runningPod.Status.PodIP)}
 			clientPod := JobForNode("sctpclient", clientNode, "sctpclient", []string{"/bin/bash", "-c"}, clientArgs)
-			clients.k8sClient.CoreV1().Pods("default").Create(clientPod)
+			clients.k8sClient.CoreV1().Pods(testNamespace).Create(clientPod)
 
 			Eventually(func() k8sv1.PodPhase {
-				pod, err := clients.k8sClient.CoreV1().Pods("default").Get(serverPod.Name, metav1.GetOptions{})
+				pod, err := clients.k8sClient.CoreV1().Pods(testNamespace).Get(serverPod.Name, metav1.GetOptions{})
 				Expect(err).ToNot(HaveOccurred())
 				return pod.Status.Phase
 			}, 1*time.Minute, 1*time.Second).Should(Equal(k8sv1.PodSucceeded))
@@ -152,11 +178,11 @@ func checkForSctpReady(client *kubernetes.Clientset) {
 	args := []string{`set -x; x="$(checksctp 2>&1)"; echo "$x" ; if [ "$x" = "SCTP supported" ]; then echo "succeeded"; exit 0; else echo "failed"; exit 1; fi`}
 	for _, n := range nodes.Items {
 		job := JobForNode("checksctp", n.ObjectMeta.Labels[hostnameLabel], "checksctp", []string{"/bin/bash", "-c"}, args)
-		client.CoreV1().Pods("default").Create(job)
+		client.CoreV1().Pods(testNamespace).Create(job)
 	}
 
 	Eventually(func() bool {
-		pods, err := client.CoreV1().Pods("default").List(metav1.ListOptions{LabelSelector: "app=checksctp"})
+		pods, err := client.CoreV1().Pods(testNamespace).List(metav1.ListOptions{LabelSelector: "app=checksctp"})
 		ExpectWithOffset(1, err).ToNot(HaveOccurred())
 
 		for _, p := range pods.Items {
@@ -178,7 +204,7 @@ func applySELinuxPolicy(client *kubernetes.Clientset) {
 	}
 
 	Eventually(func() bool {
-		pods, err := client.CoreV1().Pods("default").List(metav1.ListOptions{LabelSelector: "app=sctppolicy"})
+		pods, err := client.CoreV1().Pods(testNamespace).List(metav1.ListOptions{LabelSelector: "app=sctppolicy"})
 		ExpectWithOffset(1, err).ToNot(HaveOccurred())
 
 		for _, p := range pods.Items {
@@ -197,6 +223,7 @@ func createSEPolicyPods(client *kubernetes.Clientset, node string) {
 			Labels: map[string]string{
 				"app": "sctppolicy",
 			},
+			Namespace: testNamespace,
 		},
 		Spec: k8sv1.PodSpec{
 			RestartPolicy: k8sv1.RestartPolicyNever,
@@ -237,7 +264,7 @@ func createSEPolicyPods(client *kubernetes.Clientset, node string) {
 		},
 	}
 
-	_, err := client.CoreV1().Pods("default").Create(&pod)
+	_, err := client.CoreV1().Pods(testNamespace).Create(&pod)
 	if err != nil {
 		log.Fatal("Failed to create policy pod", err)
 	}
@@ -246,7 +273,8 @@ func createSEPolicyPods(client *kubernetes.Clientset, node string) {
 func createSctpService(client *kubernetes.Clientset) {
 	service := k8sv1.Service{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: "sctpservice",
+			Name:      "sctpservice",
+			Namespace: testNamespace,
 		},
 		Spec: k8sv1.ServiceSpec{
 			Selector: map[string]string{
@@ -265,7 +293,7 @@ func createSctpService(client *kubernetes.Clientset) {
 		},
 	}
 	Eventually(func() error {
-		_, err := client.CoreV1().Services("default").Create(&service)
+		_, err := client.CoreV1().Services(testNamespace).Create(&service)
 		return err
 	}, 3*time.Minute, 1*time.Second).ShouldNot(HaveOccurred())
 }
@@ -277,6 +305,7 @@ func JobForNode(name, node, app string, cmd []string, args []string) *k8sv1.Pod 
 			Labels: map[string]string{
 				"app": app,
 			},
+			Namespace: testNamespace,
 		},
 		Spec: k8sv1.PodSpec{
 			RestartPolicy: k8sv1.RestartPolicyNever,
@@ -312,6 +341,10 @@ func newBool(x bool) *bool {
 }
 
 func newInt(x int) *int {
+	return &x
+}
+
+func newInt64(x int64) *int64 {
 	return &x
 }
 
