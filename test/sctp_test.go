@@ -60,10 +60,11 @@ var _ = Describe("TestSctp", func() {
 		createSctpService(clients.k8sClient)
 	})
 
-	var _ = Describe("Client Server Connection", func() {
-		var clientNode string
-		var serverNode string
-		It("Should fetch client and server node", func() {
+	var _ = Context("Client Server Connection", func() {
+
+		It("should connect the client and the server", func() {
+			var clientNode string
+			var serverNode string
 			nodes, err := clients.k8sClient.CoreV1().Nodes().List(metav1.ListOptions{
 				LabelSelector: "node-role.kubernetes.io/worker=",
 			})
@@ -74,10 +75,7 @@ var _ = Describe("TestSctp", func() {
 			if len(nodes.Items) > 1 {
 				serverNode = nodes.Items[1].Name
 			}
-		})
-		var err error
-		var serverPod *k8sv1.Pod
-		It("Should create the server pod", func() {
+
 			serverArgs := []string{"sctp_test -H localhost -P 30101 -l 2>&1 > sctp.log & while sleep 10; do if grep --quiet SHUTDOWN sctp.log; then exit 0; fi; done"}
 			pod := JobForNode("scptserver", serverNode, "sctpserver", []string{"/bin/bash", "-c"}, serverArgs)
 			pod.Spec.Containers[0].Ports = []k8sv1.ContainerPort{
@@ -87,27 +85,20 @@ var _ = Describe("TestSctp", func() {
 					ContainerPort: 30101,
 				},
 			}
-			serverPod, err = clients.k8sClient.CoreV1().Pods("default").Create(pod)
+			serverPod, err := clients.k8sClient.CoreV1().Pods("default").Create(pod)
 			Expect(err).ToNot(HaveOccurred())
-		})
 
-		var runningPod *k8sv1.Pod
-
-		It("Should fetch the address of the server pod", func() {
+			var runningPod *k8sv1.Pod
 			Eventually(func() k8sv1.PodPhase {
 				runningPod, err = clients.k8sClient.CoreV1().Pods("default").Get(serverPod.Name, metav1.GetOptions{})
 				Expect(err).ToNot(HaveOccurred())
 				return runningPod.Status.Phase
 			}, 3*time.Minute, 1*time.Second).Should(Equal(k8sv1.PodRunning))
-		})
 
-		It("Should create the client pod", func() {
 			clientArgs := []string{fmt.Sprintf("sctp_test -H localhost -P 30100 -h %s -p 30101 -s", runningPod.Status.PodIP)}
 			clientPod := JobForNode("sctpclient", clientNode, "sctpclient", []string{"/bin/bash", "-c"}, clientArgs)
 			clients.k8sClient.CoreV1().Pods("default").Create(clientPod)
-		})
 
-		It("Should complete the server pod", func() {
 			Eventually(func() k8sv1.PodPhase {
 				pod, err := clients.k8sClient.CoreV1().Pods("default").Get(serverPod.Name, metav1.GetOptions{})
 				Expect(err).ToNot(HaveOccurred())
@@ -157,10 +148,24 @@ func openFeaturegate(client *configClientv1.ConfigV1Client) {
 
 func applyMC(client *mcfgClient.Clientset, k8sClient *kubernetes.Clientset, mc *mcfgv1.MachineConfig) {
 	client.MachineconfigurationV1().MachineConfigs().Create(mc)
-	waitForSctpReady(k8sClient)
+	waitForMCApplied(client)
+	checkForSctpReady(k8sClient)
 }
 
-func waitForSctpReady(client *kubernetes.Clientset) {
+func waitForMCApplied(client *mcfgClient.Clientset) {
+	Eventually(func() bool {
+		mcp, err := client.MachineconfigurationV1().MachineConfigPools().Get("worker", metav1.GetOptions{})
+		ExpectWithOffset(1, err).ToNot(HaveOccurred())
+		for _, s := range mcp.Status.Configuration.Source {
+			if s.Name == "10-allow-sctp" {
+				return true
+			}
+		}
+		return false
+	}, 10*time.Minute, 10*time.Second).Should(Equal(true)) // long timeout since this requires reboots
+}
+
+func checkForSctpReady(client *kubernetes.Clientset) {
 	nodes, err := client.CoreV1().Nodes().List(metav1.ListOptions{
 		LabelSelector: "node-role.kubernetes.io/worker=",
 	})
@@ -182,7 +187,7 @@ func waitForSctpReady(client *kubernetes.Clientset) {
 			}
 		}
 		return true
-	}, 10*time.Minute, 10*time.Second).Should(Equal(true)) // long timeout since this requires reboots
+	}, 3*time.Minute, 10*time.Second).Should(Equal(true))
 }
 
 func applySELinuxPolicy(client *kubernetes.Clientset) {
@@ -318,8 +323,8 @@ func beforeAll(fn func()) {
 	first := true
 	BeforeEach(func() {
 		if first {
-			fn()
 			first = false
+			fn()
 		}
 	})
 }
