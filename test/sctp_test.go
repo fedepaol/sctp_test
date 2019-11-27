@@ -12,7 +12,6 @@ import (
 	mcfgv1 "github.com/openshift/machine-config-operator/pkg/apis/machineconfiguration.openshift.io/v1"
 	mcfgScheme "github.com/openshift/machine-config-operator/pkg/generated/clientset/versioned/scheme"
 
-	v1 "github.com/openshift/api/config/v1"
 	configClientv1 "github.com/openshift/client-go/config/clientset/versioned/typed/config/v1"
 	k8sv1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -55,7 +54,6 @@ var _ = Describe("TestSctp", func() {
 
 	beforeAll(func() {
 		mc = loadMC()
-		openFeaturegate(clients.ocpConfigClient)
 		applySELinuxPolicy(clients.k8sClient)
 		applyMC(clients.mcoClient, clients.k8sClient, mc)
 		createSctpService(clients.k8sClient)
@@ -124,27 +122,6 @@ func setupClients() *testClients {
 	res.ocpConfigClient = configClientv1.NewForConfigOrDie(config)
 	res.mcoClient = mcfgClient.NewForConfigOrDie(config)
 	return &res
-}
-
-func openFeaturegate(client *configClientv1.ConfigV1Client) {
-	Context("Open Feature Gate", func() {
-		fg, err := client.FeatureGates().Get("cluster", metav1.GetOptions{})
-		Expect(err).ToNot(HaveOccurred())
-
-		fg.Spec = v1.FeatureGateSpec{
-			FeatureGateSelection: v1.FeatureGateSelection{
-				FeatureSet: "CustomNoUpgrade",
-				CustomNoUpgrade: &v1.CustomFeatureGates{
-					Enabled: []string{
-						"SCTPSupport",
-					},
-				},
-			},
-		}
-
-		_, err = client.FeatureGates().Update(fg)
-		Expect(err).ToNot(HaveOccurred())
-	})
 }
 
 func applyMC(client *mcfgClient.Clientset, k8sClient *kubernetes.Clientset, mc *mcfgv1.MachineConfig) {
