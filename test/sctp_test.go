@@ -32,6 +32,7 @@ type testClients struct {
 var clients *testClients
 
 const mc_yaml = "../sctp_module_mc.yaml" // TODO pass it as a param?
+const hostnameLabel = "kubernetes.io/hostname"
 
 var _ = BeforeSuite(func() {
 	clients = setupClients()
@@ -70,10 +71,10 @@ var _ = Describe("TestSctp", func() {
 			})
 
 			Expect(err).ToNot(HaveOccurred())
-			clientNode = nodes.Items[0].Name
-			serverNode = nodes.Items[0].Name
+			clientNode = nodes.Items[0].ObjectMeta.Labels[hostnameLabel]
+			serverNode = nodes.Items[0].ObjectMeta.Labels[hostnameLabel]
 			if len(nodes.Items) > 1 {
-				serverNode = nodes.Items[1].Name
+				serverNode = nodes.Items[1].ObjectMeta.Labels[hostnameLabel]
 			}
 
 			serverArgs := []string{"sctp_test -H localhost -P 30101 -l 2>&1 > sctp.log & while sleep 10; do if grep --quiet SHUTDOWN sctp.log; then exit 0; fi; done"}
@@ -173,7 +174,7 @@ func checkForSctpReady(client *kubernetes.Clientset) {
 
 	args := []string{`set -x; x="$(checksctp 2>&1)"; echo "$x" ; if [ "$x" = "SCTP supported" ]; then echo "succeeded"; exit 0; else echo "failed"; exit 1; fi`}
 	for _, n := range nodes.Items {
-		job := JobForNode("checksctp", n.Name, "checksctp", []string{"/bin/bash", "-c"}, args)
+		job := JobForNode("checksctp", n.ObjectMeta.Labels[hostnameLabel], "checksctp", []string{"/bin/bash", "-c"}, args)
 		client.CoreV1().Pods("default").Create(job)
 	}
 
@@ -196,7 +197,7 @@ func applySELinuxPolicy(client *kubernetes.Clientset) {
 	})
 	Expect(err).ToNot(HaveOccurred())
 	for _, n := range nodes.Items {
-		createSEPolicyPods(client, n.Name)
+		createSEPolicyPods(client, n.ObjectMeta.Labels[hostnameLabel])
 	}
 
 	Eventually(func() bool {
@@ -254,7 +255,7 @@ func createSEPolicyPods(client *kubernetes.Clientset, node string) {
 				},
 			},
 			NodeSelector: map[string]string{
-				"kubernetes.io/hostname": node,
+				hostnameLabel: node,
 			},
 		},
 	}
@@ -311,7 +312,7 @@ func JobForNode(name, node, app string, cmd []string, args []string) *k8sv1.Pod 
 				},
 			},
 			NodeSelector: map[string]string{
-				"kubernetes.io/hostname": node,
+				hostnameLabel: node,
 			},
 		},
 	}
