@@ -49,7 +49,7 @@ func loadMC() *mcfgv1.MachineConfig {
 	return mc
 }
 
-const testNamespace = "default"
+const testNamespace = "sctptest"
 
 func createNamespace(client *kubernetes.Clientset) {
 	_, err := client.CoreV1().Namespaces().Create(&k8sv1.Namespace{
@@ -78,7 +78,6 @@ var _ = Describe("TestSctp", func() {
 	var mc *mcfgv1.MachineConfig
 
 	beforeAll(func() {
-		fmt.Println("Before")
 		createNamespace(clients.k8sClient)
 		cleanNamespace(clients.k8sClient)
 		mc = loadMC()
